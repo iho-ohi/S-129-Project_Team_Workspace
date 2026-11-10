@@ -19,16 +19,15 @@ function PortrayalMain(featureIDs)
 	-- higher priority edges suppress lower priority edges.
 
 	function ProcessFeaturePortrayalItem(featurePortrayalItem)
-		Debug.StartPerformance('Lua Code - Dataset processing')
 
 		local feature = featurePortrayalItem.Feature
 
-		--Debug.Break()
-
+		Debug.StartPerformance('Lua Code - Dataset processing')
+		
 		local featurePortrayal = featurePortrayalItem:NewFeaturePortrayal()
 
 		contextParameters._observed = {}
-
+		
 		local status, err = pcall(function ()
 			Debug.StartPerformance('Lua Code - Rules processing')
 
@@ -40,7 +39,11 @@ function PortrayalMain(featureIDs)
 			end
 
 			require(feature.Code)
-			_G[feature.Code](feature, featurePortrayal, contextParameters)
+			local viewingGroup = _G[feature.Code](feature, featurePortrayal, contextParameters)
+
+			if not viewingGroup then
+				error('Viewing group not returned for feature ' .. feature.ID)
+			end
 
 			if #featurePortrayal.DrawingInstructions == 0 then
 				error('No drawing instructions were emitted for feature ' .. feature.ID)
@@ -64,8 +67,6 @@ function PortrayalMain(featureIDs)
 
 		featurePortrayalItem.ObservedContextParameters = contextParameters._observed
 		featurePortrayalItem.InUseContextParameters = contextParameters._asTable
-
-		--Debug.Break()
 
 		local observed = ObservedContextParametersAsString(featurePortrayalItem)
 
@@ -102,7 +103,8 @@ end
 local unknownValueMetatable =
 {
 	__eq = function (o1, o2)
-		-- Never called when o1 and o2 are the same table.
+		-- always false because reference equality is handled prior to the metamethod being called.
+		-- this also means we don't have to worry about the EqMetaMethodGuarantee
 		return false
 	end,
 
@@ -123,4 +125,40 @@ nilMarker = {}
 
 scaminInfinite = 2147483647
 
-sqParams = {'SpatialAssociation', 'defines', 'SpatialQuality'}
+sqParams = {'SpatialAssociation', 'theQualityInformation', 'SpatialQuality'}
+
+-- Compatibility Checks
+
+-- Later versions of Lua use table.unpack instead of a global function
+unpack = unpack or table.unpack
+
+-- Lua 5.3 and later evaluate the __eq metamethod differently than earlier versions. In earlier
+-- versions the __eq metamethod is only called when both the lhs and rhs are the same type and
+-- have the same metamethod.
+--
+-- In version 5.3 and later Lua looks for an __eq metamethod on the lhs and then on the rhs; if
+-- any metamethod was found, it is called. There is no guarantee that the lhs and rhs are the same
+-- type.
+--
+-- NOTE: S-100 requires a Lua 5.1 scripting engine. Support for other versions should not be taken
+-- to imply that later versions will be supported in other cases. In cases where it is not possible
+-- to support multiple versions (either due to technical challenges or resource constraints) the
+-- scripts are only guaranteed to run as intended on Lua 5.1.
+--
+-- Lua 5.1: ScaledDecimal == unknownValue => false (because the __eq metamethods differ)
+--
+-- Lua 5.3: ScaledDecimal == unknownValue => error (because the ScaledDecimal __eq metamethod is called)
+-- Lua 5.3: unknownValue == ScaledDecimal => false (because the unknownValue __eq metamethod is called)
+EqMetaMethodGuarantee = true
+
+local t1 = {}
+local t2 = {}
+local m1 = {}
+local m2 = {}
+setmetatable(t1, m1)
+setmetatable(t2, m2)
+m1.__eq = function(p1, p2) return true end
+EqMetaMethodGuarantee = not (t1 == t2)
+if not EqMetaMethodGuarantee then
+	Debug.Trace('Warning: Non-standard Lua processor detected.')
+end

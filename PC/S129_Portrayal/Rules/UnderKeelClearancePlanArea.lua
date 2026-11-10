@@ -1,4 +1,6 @@
 function UnderKeelClearancePlanArea(feature, featurePortrayal, contextParameters)
+    local viewingGroup = 29010
+
     featurePortrayal:AddInstructions('ViewingGroup:29010;DrawingPriority:6;DisplayPlane:UnderRadar')
 
     if contextParameters.PlainBoundaries then
@@ -7,4 +9,6 @@ function UnderKeelClearancePlanArea(feature, featurePortrayal, contextParameters
     else
         featurePortrayal:AddInstructions('LineInstruction:UKCARE01')
     end
+
+    return viewingGroup
 end

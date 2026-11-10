@@ -5,6 +5,7 @@ These functions are intended to be called by the S-100 scripts.
 -- #80 - modularize processing of fixed and periodic date ranges
 -- #119
 -- #207
+-- #367
 
 local orig_error = error
 
@@ -85,12 +86,17 @@ function ProcessFixedAndPeriodicDates(feature, featurePortrayal)
 end
 
 function AddDateDependentSymbol(feature, featurePortrayal, contextParameters, viewingGroup)
+
+	-- #367, Do not add symbol to feature with no geometry
+	if feature.PrimitiveType == PrimitiveType.None then
+		return
+	end
 	-- Clear any existing transforms and geometries
 	featurePortrayal:AddInstructions('LocalOffset:0,0;LinePlacement:Relative,0.5;AreaPlacement:VisibleParts;AreaCRS:GlobalGeometry;Rotation:PortrayalCRS,0;ScaleFactor:1;ClearGeometry')
 
 	featurePortrayal:AddInstructions('Hover:true')
 
-	local displayPlane = contextParameters.RadarOverlay and 'DisplayPlane:OverRadar' or 'DisplayPlane:UnderRadar'
+	local displayPlane = 'DisplayPlane:UnderRADAR'
 
 	featurePortrayal:AddInstructions(displayPlane)
 	featurePortrayal:AddInstructions('ViewingGroup:' .. viewingGroup .. ',90022;DrawingPriority:24;PointInstruction:CHDATD01')
@@ -134,9 +140,9 @@ function ProcessNauticalInformation(feature, featurePortrayal, contextParameters
 	local vg90020, vg90021
 
 	vg90020, vg90021 = GetViewingGroups(feature, vg90020, vg90021)
-	vg90020, vg90021 = GetViewingGroups(feature:GetInformationAssociation('AdditionalInformation', 'providesInformation', 'NauticalInformation'), vg90020, vg90021)
-	vg90020, vg90021 = GetViewingGroups(feature:GetInformationAssociation('AdditionalInformation', 'providesInformation', 'NonStandardWorkingDay'), vg90020, vg90021)
-	vg90020, vg90021 = GetViewingGroups(feature:GetInformationAssociation('AdditionalInformation', 'providesInformation', 'ServiceHours'), vg90020, vg90021)
+	vg90020, vg90021 = GetViewingGroups(feature:GetInformationAssociation('AdditionalInformation', 'theInformation', 'NauticalInformation'), vg90020, vg90021)
+	vg90020, vg90021 = GetViewingGroups(feature:GetInformationAssociation('AdditionalInformation', 'theInformation', 'NonStandardWorkingDay'), vg90020, vg90021)
+	vg90020, vg90021 = GetViewingGroups(feature:GetInformationAssociation('AdditionalInformation', 'theInformation', 'ServiceHours'), vg90020, vg90021)
 
 	if vg90020 or vg90021 then
 		-- Clear any existing transforms and geometries
@@ -144,7 +150,7 @@ function ProcessNauticalInformation(feature, featurePortrayal, contextParameters
 
 		featurePortrayal:AddInstructions('Hover:true')
 
-		local displayPlane = contextParameters.RadarOverlay and 'DisplayPlane:OverRadar' or 'DisplayPlane:UnderRadar'
+		local displayPlane = 'DisplayPlane:UnderRADAR'
 
 		if vg90020 then
 			featurePortrayal:AddInstructions(displayPlane)
@@ -231,8 +237,22 @@ local function ScaledDecimalToNumber(scaledDecimal)
 	return value
 end
 
+local function ScaledDecimalCompare_EqMetaMethodGuarantee(scaledDecimal1, scaledDecimal2)
+	CheckType(scaledDecimal1, 'ScaledDecimal')
+	CheckType(scaledDecimal2, 'ScaledDecimal')
 
-function ScaledDecimalCompare(scaledDecimal1, scaledDecimal2)
+	local sd1 = { Value = scaledDecimal1.Value, Scale = scaledDecimal1.Scale }
+	local sd2 = { Value = scaledDecimal2.Value, Scale = scaledDecimal2.Scale }
+
+	NormalizeScaledDecimals(sd1, sd2)
+
+	return sd1.Value - sd2.Value
+end
+
+local function ScaledDecimalCompare_NotEqMetaMethodGuarantee(scaledDecimal1, scaledDecimal2)
+	if scaledDecimal2.Type ~= 'ScaledDecimal' then
+		return 1
+	end
 	CheckType(scaledDecimal1, 'ScaledDecimal')
 	CheckType(scaledDecimal2, 'ScaledDecimal')
 
@@ -275,6 +295,8 @@ local function ScaledDecimalSplit(scaledDecimal)
 		return sign, left, right
 	end
 end
+
+local ScaledDecimalCompare = EqMetaMethodGuarantee and ScaledDecimalCompare_EqMetaMethodGuarantee or ScaledDecimalCompare_NotEqMetaMethodGuarantee
 
 local scaledDecimalMetatable =
 {
@@ -365,7 +387,6 @@ function CreateScaledDecimal(value, scale)
 
 	return scaledDecimal
 end
-
 
 local scaledDecimalsScale = {}
 
@@ -670,6 +691,10 @@ unknownAttributeValueString = '13BD40516CF742E886D5B4125DBB89742A043D0050E44B568
 --
 
 function contains(value, array)
+	if type(array) ~= "table" then
+        return false
+    end
+
 	for i = 1, #array do
 		if array[i] == value then
 			return true
@@ -687,6 +712,15 @@ function contains(value, array)
 	end
 
 	return false
+end
+
+-- table.concat with a nil check
+function safeConcat(t, s)
+	if t == nil then
+		return ''
+	end
+
+	return table.concat(t, s)
 end
 
 --
@@ -738,22 +772,6 @@ end
 scaledDecimalZero = CreateScaledDecimal(0, 0)
 scaledDecimalOne = CreateScaledDecimal(1, 0)
 
-local mToFt = CreateScaledDecimal(328083989, 8)
-local mToFm = CreateScaledDecimal(54680664, 8)
-
-
-function ConvertDepth(depth, unit)
-	CheckType(depth, 'ScaledDecimal')
-	CheckType(unit, 'string')
-
-	if unit == 'ft' then
-		depth = depth * mToFt
-	elseif unit == 'Fm' then
-		depth= depth * mToFm
-	end
-
-	return depth
-end
 
 
 --
