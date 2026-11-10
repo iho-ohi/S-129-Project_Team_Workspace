@@ -191,11 +191,7 @@ local function LookupAttributeValue(container, attributeCode, HostGetSimpleAttri
 
 			container['@' .. attributeCode] = value
 
-			-- Bug in the IHO portrayal catalog?
-			--
-			-- This calls the == operator for value, which checks the type of
-			-- Swapping the order calls the unkownValue == operator, which always returns false
-			if unknownValue == value  then
+			if value == unknownValue then
 				value = nil
 			end
 
@@ -210,7 +206,7 @@ local function LookupAttributeValue(container, attributeCode, HostGetSimpleAttri
 
 				convertedValues['@' .. i] = convertedValue
 
-				if unknownValue == convertedValue then
+				if convertedValue == unknownValue then
 					convertedValue = nil
 				end
 
@@ -342,7 +338,7 @@ end
 --
 --
 
-function CreateAttributeConstraints(stringLength, textPattern, rangeLower, rangeUpper, closure, precision)
+function CreateAttributeConstraints(stringLength, textPattern, rangeLower, rangeUpper, rangeClosure, precision)
 	CheckTypeOrNil(stringLength, 'number')
 	CheckTypeOrNil(textPattern, 'string')
 	CheckTypeOrNil(rangeLower, 'string')
@@ -518,7 +514,7 @@ function CreateFeature(featureID, featureCode)
 
 		if not ias then
 			Debug.StopPerformance('Lua Code - Total')
-			local informationIDs = HostFeatureGetAssociatedInformationIDs(self.ID, associationCode, roleCode)
+			local informationIDs = HostFeatureGetAssociatedInformationIDs(self.ID, associationCode, roleCode) or {}
 			Debug.StartPerformance('Lua Code - Total')
 
 			ias = {}
@@ -569,7 +565,7 @@ function CreateFeature(featureID, featureCode)
 
 		if not fas then
 			Debug.StopPerformance('Lua Code - Total')
-			local featureIDs = HostFeatureGetAssociatedFeatureIDs(self.ID, associationCode, roleCode)
+			local featureIDs = HostFeatureGetAssociatedFeatureIDs(self.ID, associationCode, roleCode) or {}
 			Debug.StartPerformance('Lua Code - Total')
 
 			fas = {}
@@ -647,10 +643,51 @@ function CreateFeature(featureID, featureCode)
 			return self['Spatial']
 		end
 	end
+	
+	function feature:FlattenSpatialAssociation(spas)
+		local fsa = {}
+		
+		local function FlattenCompositeCurve(compositeCurve)
+			for _, curveElement in ipairs(compositeCurve.CurveAssociations) do
+				if curveElement.SpatialType == SpatialType.CompositeCurve then
+					FlattenCompositeCurve(curveElement.Spatial)
+				else
+					fsa[#fsa + 1] = curveElement
+				end
+			end
+		end
+
+		local spatialType = spas.SpatialType
+
+		if spatialType == SpatialType.Point then
+			fsa[#fsa + 1] = spas
+		elseif spatialType == SpatialType.MultiPoint then
+			fsa[#fsa + 1] = spas
+		elseif spatialType == SpatialType.Curve then
+			fsa[#fsa + 1] = spas
+		elseif spatialType == SpatialType.CompositeCurve then
+			FlattenCompositeCurve(spas.Spatial)
+		elseif spatialType == SpatialType.Surface then
+			if spas.Spatial.ExteriorRing.SpatialType == SpatialType.CompositeCurve then
+				FlattenCompositeCurve(spas.Spatial.ExteriorRing.Spatial)
+			else
+				fsa[#fsa + 1] = spas.Spatial.ExteriorRing
+			end
+
+			for _, ring in ipairs(spas.Spatial.InteriorRings) do
+				if ring.SpatialType == SpatialType.CompositeCurve then
+					FlattenCompositeCurve(ring.Spatial)
+				else
+					fsa[#fsa + 1] = ring
+				end
+			end
+		end
+		
+		return fsa
+	end
 
 	-- Returns an iterator that returns all spatial associations to points, multi points and curves
 	-- associated to the feature.  Surface and composite curves return only their ultimate simple curves.
-	-- This only works for features with a single spatial association.
 	function feature:GetFlattenedSpatialAssociations()
 		local fsa = self['FlattenedSpatialAssociations']
 
@@ -659,35 +696,9 @@ function CreateFeature(featureID, featureCode)
 
 			fsa = self['FlattenedSpatialAssociations']
 
-			local function FlattenCompositeCurve(compositeCurve)
-				for _, curveElement in ipairs(compositeCurve.CurveAssociations) do
-					if curveElement.SpatialType == SpatialType.CompositeCurve then
-						FlattenCompositeCurve(curveElement.Spatial)
-					else
-						fsa[#fsa + 1] = curveElement
-					end
-				end
-			end
-
-			local spatialType = self:GetSpatialAssociation().SpatialType
-
-			if contains(spatialType, { SpatialType.Point, SpatialType.MultiPoint, SpatialType.Curve }) then
-				fsa[#fsa + 1] = self:GetSpatialAssociation()
-			elseif spatialType == SpatialType.CompositeCurve then
-				FlattenCompositeCurve(self.CompositeCurve)
-			elseif spatialType == SpatialType.Surface then
-				if self.Surface.ExteriorRing.SpatialType == SpatialType.CompositeCurve then
-					FlattenCompositeCurve(self.Surface.ExteriorRing.Spatial)
-				else
-					fsa[#fsa + 1] = self.Surface.ExteriorRing
-				end
-
-				for _, ring in ipairs(self.Surface.InteriorRings) do
-					if ring.SpatialType == SpatialType.CompositeCurve then
-						FlattenCompositeCurve(ring.Spatial)
-					else
-						fsa[#fsa + 1] = ring
-					end
+			for _, spas in ipairs(self:GetSpatialAssociations()) do
+				for _, v in ipairs(self:FlattenSpatialAssociation(spas)) do
+					fsa[#fsa + 1] = v
 				end
 			end
 		end
@@ -801,7 +812,7 @@ function CreateSpatialAssociation(spatialType, spatialID, orientation, scaleMini
 
 	function spatialAssociation:GetAssociatedFeatures()
 		Debug.StopPerformance('Lua Code - Total')
-		local featureIDs = HostSpatialGetAssociatedFeatureIDs(self.SpatialID)
+		local featureIDs = HostSpatialGetAssociatedFeatureIDs(self.SpatialID) or {}
 		Debug.StartPerformance('Lua Code - Total')
 
 		self.AssociatedFeatures = {}
@@ -826,7 +837,7 @@ function CreateSpatialAssociation(spatialType, spatialID, orientation, scaleMini
 
 		if not ias then
 			Debug.StopPerformance('Lua Code - Total')
-			local informationIDs = HostSpatialGetAssociatedInformationIDs(self.SpatialID, associationCode, roleCode)
+			local informationIDs = HostSpatialGetAssociatedInformationIDs(self.SpatialID, associationCode, roleCode) or {}
 			Debug.StartPerformance('Lua Code - Total')
 
 			ias = {}
@@ -888,7 +899,7 @@ local function CreateSpatial(spatialType, spatial)
 
 		if not ias then
 			Debug.StopPerformance('Lua Code - Total')
-			local informationIDs = HostSpatialGetAssociatedInformationIDs(self.SpatialID, associationCode, roleCode)
+			local informationIDs = HostSpatialGetAssociatedInformationIDs(self.SpatialID, associationCode, roleCode) or {}
 			Debug.StartPerformance('Lua Code - Total')
 
 			ias = {}
